@@ -1,0 +1,62 @@
+name: Checks
+
+on:
+  pull_request:
+  # allow workflow to be called from other workflows
+  workflow_call:
+  # allow workflow to be called from github.com UI
+  workflow_dispatch:
+  push:
+    branches-ignore: [develop]
+
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.ref }}
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  NODE_OPTIONS: '--no-warnings'
+  ACTIONS_RUNNER_DEBUG: true
+
+jobs:
+  checks:
+    name: '🔎 Checks'
+    timeout-minutes: 3
+    runs-on: ['ubuntu-latest']
+    steps:
+      - name: '🔑 Checkout'
+        uses: actions/checkout@v4.1.1
+
+      - name: '🐰 Setup Bun'
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: 'latest'
+
+      - name: 'Setup Biome'
+        uses: biomejs/setup-biome@v1
+        with:
+          version: 'latest'
+
+      # if lint fails no need to continue
+      - name: '🧹 Lint'
+        continue-on-error: false
+        run: biome ci .
+
+      - name: '📦 Install Dependencies'
+        run: bun install --frozen-lockfile
+
+      - name: '🧪 Typecheck'
+        run: bunx tsc --project tsconfig.json --noEmit
+
+      - name: '🔧 Build TypeScript App'
+        run: bun run build
+
+      - name: '🏗 Build Indexer Image'
+        run: |
+          docker compose --file='compose.yml' --project-name='efp' up --build --abort-on-container-exit --no-start indexer
+
+      - name: '🏗 Build Database Image'
+        run: |
+          docker compose --file='compose.yml' --project-name='efp' up --build --abort-on-container-exit --no-start database

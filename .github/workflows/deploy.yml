@@ -1,0 +1,81 @@
+name: Deploy
+
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch:
+    inputs:
+      RAILWAY_ENVIRONMENT:
+        type: string
+        description: 'Railway environment to deploy to'
+        required: false
+        default: 'production'
+      RAILWAY_SERVICES:
+        type: choice
+        description: 'Services to deploy'
+        required: false
+        options:
+          - 'indexer'
+          - 'anvil'
+          - 'all'
+        default: 'all'
+
+concurrency:
+  group: deploy-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  ACTIONS_RUNNER_DEBUG: true
+  NODE_OPTIONS: '--no-warnings'
+  COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+  DEPLOY_SERVICES: ${{ github.event.inputs.RAILWAY_SERVICES }}
+  RAILWAY_ENVIRONMENT: ${{ github.event.inputs.RAILWAY_ENVIRONMENT }}
+
+jobs:
+  checks:
+    uses: './.github/workflows/checks.yml'
+
+  deploy:
+    name: '🚀 Deploy'
+    # only deploy if commit message contains `[deploy]`
+    if: ${{ contains(github.event.head_commit.message, '[deploy]') || github.event_name == 'workflow_dispatch' }}
+    needs: [checks]
+    timeout-minutes: 3
+    runs-on: ['ubuntu-latest']
+    steps:
+      - name: '🔑 Checkout'
+        uses: actions/checkout@v4.1.1
+
+      - name: 'Install Railway CLI'
+        run: yarn global add @railway/cli
+
+      - name: 'Deploy Indexer'
+        if: ${{ contains(env.DEPLOY_SERVICES, 'indexer') || contains(env.DEPLOY_SERVICES, 'all') }}
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_SERVICE_NAME: 'indexer'
+        run: |
+          railway link $RAILWAY_PROJECT_ID ${{ env.RAILWAY_SERVICE_NAME }} \
+            --environment='${{ env.RAILWAY_ENVIRONMENT }}'
+
+          RAILWAY_DOCKERFILE="./Dockerfile" railway up --service='${{ env.RAILWAY_SERVICE_NAME }}' \
+            --environment='${{ env.RAILWAY_ENVIRONMENT }}'
+
+      - name: 'Deploy Anvil'
+        if: ${{ contains(env.DEPLOY_SERVICES, 'anvil') || contains(env.DEPLOY_SERVICES, 'all') }}
+        working-directory: './anvil'
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_SERVICE_NAME: 'anvil'
+        run: |
+          railway link $RAILWAY_PROJECT_ID ${{ env.RAILWAY_SERVICE_NAME }} \
+            --environment='${{ env.RAILWAY_ENVIRONMENT }}'
+
+          RAILWAY_DOCKERFILE="./Dockerfile" railway up --service='${{ env.RAILWAY_SERVICE_NAME }}' \
+            --environment='${{ env.RAILWAY_ENVIRONMENT }}'
